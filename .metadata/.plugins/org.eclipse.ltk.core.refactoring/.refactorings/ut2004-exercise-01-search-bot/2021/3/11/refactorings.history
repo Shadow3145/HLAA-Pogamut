@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">
+<refactoring comment="Rename method &apos;ut2004.exercises.e01.SearchBot.reset()&apos; to &apos;restart&apos;&#x0D;&#x0A;- Original project: &apos;ut2004-exercise-01-search-bot&apos;&#x0D;&#x0A;- Original element: &apos;ut2004.exercises.e01.SearchBot.reset()&apos;&#x0D;&#x0A;- Renamed element: &apos;ut2004.exercises.e01.SearchBot.restart()&apos;&#x0D;&#x0A;- Update references to refactored element" delegate="false" deprecate="false" description="Rename method &apos;reset&apos;" flags="589826" id="org.eclipse.jdt.ui.rename.method" input="/src\/main\/java=/optional=/true=/=/maven.pomderived=/true=/&lt;ut2004.exercises.e01{SearchBot.java[SearchBot~reset" name="restart" references="true" stamp="1616182391271" version="1.0"/>
+</session>

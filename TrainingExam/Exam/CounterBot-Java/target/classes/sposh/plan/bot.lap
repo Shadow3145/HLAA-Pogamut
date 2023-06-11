@@ -1,0 +1,8 @@
+(
+	(DC life
+		(drives 
+			  ((RUN-TO-PLAYER (trigger ((vip.bot.action.SeePlayer))) vip.bot.action.RunToPlayer))
+			  ((TURN (trigger ((cz.cuni.amis.pogamut.sposh.executor.Succeed))) vip.bot.action.Turn))
+		)
+	)
+)

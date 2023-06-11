@@ -1,0 +1,999 @@
+package guardbot;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import cz.cuni.amis.pogamut.base.agent.navigation.IPathExecutorState;
+import cz.cuni.amis.pogamut.base.agent.navigation.IPathFuture;
+import cz.cuni.amis.pogamut.base.communication.worldview.listener.annotation.EventListener;
+import cz.cuni.amis.pogamut.base.communication.worldview.listener.annotation.ObjectClassEventListener;
+import cz.cuni.amis.pogamut.base.communication.worldview.object.event.WorldObjectUpdatedEvent;
+import cz.cuni.amis.pogamut.base.utils.guice.AgentScoped;
+import cz.cuni.amis.pogamut.base.utils.math.DistanceUtils;
+import cz.cuni.amis.pogamut.base3d.worldview.object.ILocated;
+import cz.cuni.amis.pogamut.base3d.worldview.object.Location;
+import cz.cuni.amis.pogamut.unreal.communication.messages.UnrealId;
+import cz.cuni.amis.pogamut.ut2004.agent.module.sensomotoric.AgentConfig;
+import cz.cuni.amis.pogamut.ut2004.bot.impl.UT2004Bot;
+import cz.cuni.amis.pogamut.ut2004.bot.impl.UT2004BotModuleController;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.UT2004ItemType;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.ItemType.Category;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbcommands.Initialize;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.BotKilled;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.ConfigChange;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.GameInfo;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.GlobalChat;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.InitedMessage;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.Item;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.ItemPickedUp;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.NavPoint;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.Player;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.PlayerKilled;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.TeamChat;
+import cz.cuni.amis.pogamut.ut2004.utils.UT2004BotRunner;
+import cz.cuni.amis.utils.Cooldown;
+import cz.cuni.amis.utils.Tuple2;
+import cz.cuni.amis.utils.exception.PogamutException;
+import cz.cuni.amis.utils.flag.FlagListener;
+
+/**
+ * Behaviour definition for GuideBot in Java.
+ *
+ * @author Student
+ */
+@AgentScoped
+public class GuardBot extends UT2004BotModuleController<UT2004Bot> {
+
+	//
+	// ===================
+	// IMPORTANT CONSTANTS
+	// ===================
+	//
+	
+	/**
+	 * Standard movement speed of UT2004 bots, you may alter your speed by invoking {@link AgentConfig#setSpeedMultiplier(double)} 
+	 * Use: this.config.setSpeedMultiplier(...);
+	 */
+	public static final double STANDARD_MOVEMENT_SPEED = 1;
+	
+	/**
+	 * How fast is civilian moving, you may alter your speed by invoking {@link AgentConfig#setSpeedMultiplier(double)} 
+	 * Use: this.config.setSpeedMultiplier(...);
+	 */
+	public static final double CIVILIAN_MOVEMENT_SPEED = 0.7;
+
+	/**
+	 * If CivilianBot's distance (Euclidian) is greater then this, it won't hear you.
+	 */
+	public static final double CIVILIAN_TALKING_DISTANCE = 1000;
+
+	//
+	// =======================
+	// BEHAVIOR INITIALIZATION 
+	// =======================
+	//
+	
+	/**
+     * NavPoint where you have to lead the civilian.
+     */
+    private NavPoint factoryNavPoint;
+    
+    /**
+     * Tracks whether civilian is following you.
+     */
+    private Map<UnrealId, Boolean> civilianFollowingYou = new HashMap<UnrealId, Boolean>();
+    
+    /**
+     * Announced positions of civilians.
+     */
+    private Map<UnrealId, Location> civilianPositions = new HashMap<UnrealId, Location>();
+    
+    @SuppressWarnings("unchecked")
+	@Override
+    public void botInitialized(GameInfo gameInfo, ConfigChange currentConfig, InitedMessage init) {
+    	// By uncommenting following line, you can make the bot to do the file logging of all its components
+    	//bot.getLogger().addDefaultFileHandler(new File("GuideBot.log"));
+		
+		// Getting factory NavPoint
+		factoryNavPoint = DistanceUtils.getNearest(world.getAll(NavPoint.class).values(), world.getSingle(GameInfo.class).getFactoryLocation());
+    	
+    	// Hooking up listener for path-executor events
+    	navigation.getPathExecutor().getState().addStrongListener(new FlagListener<IPathExecutorState>() {
+			@Override
+			public void flagChanged(IPathExecutorState changedValue) {
+				switch (changedValue.getState()) {
+				case STUCK:
+				case PATH_COMPUTATION_FAILED:
+                    pathEventBotStuck();        // just recall the method to have clean interface
+                    break;
+                case SWITCHED_TO_ANOTHER_PATH_ELEMENT:
+                    pathEventNavPointReached(); // just recall the method to have clean interface
+                    break;
+                case TARGET_REACHED:
+                    pathEventTargetReached();   // just recall the method to have clean interface
+                    break;
+				}
+			}
+    	});
+    }
+    
+    //
+    // ==============
+    // POGAMUT EVENTS
+    // ==============
+    //
+    
+    @ObjectClassEventListener(objectClass=Player.class, eventClass=WorldObjectUpdatedEvent.class)
+    public void playerUpdated(WorldObjectUpdatedEvent<Player> event) {
+    	Player player = event.getObject();
+    	if (isCivilian(event.getObject())) {
+    		if (player.isVisible()) {
+    			civilianPositions.put(player.getId(), player.getLocation());
+    		}
+    	}
+    }
+    
+    @EventListener(eventClass=PlayerKilled.class)
+    public void playerKilled(PlayerKilled event) {
+    	Player player = players.getPlayer(event.getId());
+    	if (player == null) return;
+    	if (isCivilian(player)) {
+    		civilianKilled(event.getId());    		
+    	}
+    }
+		
+	//
+	// ====================
+	// COMMUNICATION EVENTS
+	// ====================
+	//
+	
+	//
+	// Following methods ARE NOT SENSES, NEITHER ACTIONS
+	// They are "events" which are called whenever civilian says something to you.
+	// 
+	
+	/**
+	 * CivilianBot has just announced its position in the world.
+	 * @param civilianId
+	 * @param location
+	 */
+	public void civilianPosition(UnrealId civilianId, Location location) {
+		civilianPositions.put(civilianId, location);
+	}
+	
+	/**
+	 * CivilianBot has reported that it can see your bot. Thus you can be sure that you can issue FOLLOW_ME command.
+	 */
+	public void answerCanYouSeeMe_YES(UnrealId civilianId) {	
+	}
+	
+	/**
+	 * CivilianBot has reported that it CAN NOT see your bot. Thus you can not issue FOLLOW_ME command.
+	 * @param civilianId
+	 */
+	public void answerCanYouSeeMe_NO(UnrealId civilianId) {
+	}
+	
+	/**
+	 * CivilianBot has stopped following you as you have requested.
+	 * @param civilianId
+	 */
+	public void answerStopped(UnrealId civilianId) {
+		civilianFollowingYou.put(civilianId, false);
+	}
+	
+	/**
+	 * CivilianBot has turned as you have requested.
+	 * @param civilianId
+	 */
+	public void answerTurning(UnrealId civilianId) {
+	}
+
+	/**
+	 * CivilianBot has started following you.
+	 * @param civilianId
+	 */
+	public void answerFollowMe_YES(UnrealId civilianId) {
+		civilianFollowingYou.put(civilianId, true);
+	}
+	
+	/**
+	 * CivilianBot refused to follow you as it can not see you.
+	 * @param civilianId
+	 */
+	public void answerFollowMe_NO_CanNotSee(UnrealId civilianId) {	
+		civilianFollowingYou.put(civilianId, false);
+	}
+	
+	/**
+	 * CivilianBot refused to follow you because it can see the alien, you have to kill the alien first.
+	 * @param civilianId
+	 */
+	public void answerFollowMe_NO_CanSeeAlien(UnrealId civilianId) {
+		civilianFollowingYou.put(civilianId, false);
+	}
+	
+	/**
+	 * CivilianBot has stopped following you, usually because it lost you (can't see you).
+	 * @param civilianId
+	 */
+	public void civilianStoppedFollowingYouBecauseItLostYou(UnrealId civilianId) {
+		civilianFollowingYou.put(civilianId, false);
+	}
+	
+	/**
+	 * CivilianBot can not understand you, are you sending correct message?
+	 * @param civilianId
+	 */
+	public void civilianDoesntUnderstand(UnrealId civilianId) {		
+	}
+	
+	/**
+	 * CivilianBot can not understand you, you're talking from too afar.
+	 * @param civilianId
+	 */
+	public void civilianDoesntUnderstandYouAreTooFar(UnrealId civilianId) {		
+	}
+	
+	/**
+	 * You have successfully navigated CivilianBot into the factory. You've scored!
+	 * @param civilianId
+	 */
+	public void civilianSafe(UnrealId civilianId) {
+		if (civilianToLead != null && civilianToLead.getId() == civilianId)
+			civilianToLead = null;
+		civilianFollowingYou.put(civilianId, false);
+	}
+	
+	/**
+	 * CivilianBot can see the alien!
+	 * @param civilianId
+	 */
+	public void civilianSeeAlien(UnrealId civilianId) {		
+	}
+	
+	/**
+	 * Alien gets too near to the civilian, it has been frozen by fear. It has stopped following you. 
+	 * @param civilianId
+	 */
+	public void civilianFrozen(UnrealId civilianId) {
+		civilianFollowingYou.put(civilianId, false);
+	}
+
+	/**
+	 * CivilianBot was killed, it had stopped following you (if it was).
+	 * @param civilianId
+	 */
+	public void civilianKilled(UnrealId civilianId) {
+		if (civilianToLead != null && civilianToLead.getId() == civilianId)
+			civilianToLead = null;
+		civilianPositions.remove(civilianId);
+		civilianFollowingYou.remove(civilianId);
+	}
+	
+	/**
+	 * CivilianBot refuses to answer you / obey your command as it is following other player.
+	 * @param civilianId
+	 */
+	public void civilianIsNotListeningToYou(UnrealId civilianId) {
+		// NEVER HAPPENS
+	}
+	
+	//
+	// =====================
+	// COMMUNICATION ACTIONS
+	// =====================
+	//
+	
+	/**
+	 * Asks all CivilianBots whether they can see you.
+	 */
+	public void tellAll_CanYouSeeMe() {
+		tellAll(QUESTION_SEE);
+	}
+	
+	/**
+	 * Asks one CivilianBot whether it can see you. 
+	 * @param civilianId
+	 */
+	public void tellOne_CanYouSeeMe(UnrealId civilianId) {
+		tellOne(civilianId, QUESTION_SEE);
+	}
+	
+	/**
+	 * Asks one CivilianBot whether it can see you. 
+	 * @param civilian
+	 */
+	public void tellOne_CanYouSeeMe(Player civilian) {
+		tellOne(civilian.getId(), QUESTION_SEE);
+	}
+	
+	/**
+	 * Command all CivilianBots to stop.
+	 */
+	public void tellAll_Stop() {
+		tellAll(COMMAND_STOP);
+	}
+	
+	/**
+	 * Command one CivilianBot to stop.
+	 * @param civilianId
+	 */
+	public void tellOne_Stop(UnrealId civilianId) {
+		tellOne(civilianId, COMMAND_STOP);
+	}
+	
+	/**
+	 * Command one CivilianBot to stop.
+	 * @param civilian
+	 */
+	public void tellOne_Stop(Player civilian) {
+		tellOne(civilian.getId(), COMMAND_STOP);
+	}
+	
+	/**
+	 * Command all CivilianBots to turn.
+	 */
+	public void tellAll_Turn() {
+		tellAll(COMMAND_TURN);
+	}
+	
+	/**
+	 * Command one CivilianBot to turn.
+	 * @param civilianId
+	 */
+	public void tellOne_Turn(UnrealId civilianId) {
+		tellOne(civilianId, COMMAND_TURN);
+	}
+	
+	/**
+	 * Command one CivilianBot to turn.
+	 * @param civilian
+	 */
+	public void tellOne_Turn(Player civilian) {
+		tellOne(civilian.getId(), COMMAND_TURN);
+	}
+
+	/**
+	 * Command all CivilianBots to follow you.
+	 */
+	public void tellAll_FollowMe() {
+		tellAll(COMMAND_FOLLOW_ME);
+	}
+	
+	/**
+	 * Command one CivilianBot to follow you.
+	 * @param civilianId
+	 */
+	public void tellOne_FollowMe(UnrealId civilianId) {
+		tellOne(civilianId, COMMAND_FOLLOW_ME);
+	}
+	
+	/**
+	 * Command one CivilianBot to follow you.
+	 * @param civilian
+	 */
+	public void tellOne_FollowMe(Player civilian) {
+		tellOne(civilian.getId(), COMMAND_FOLLOW_ME);
+	}
+	
+	//
+	// ===========
+	// PATH EVENTS
+	// ===========
+	//
+
+	/**
+	 * Bot has reached the target.
+	 */
+	private void pathEventTargetReached() {
+	}
+
+	/**
+	 * Nav-point on path reached.
+	 */
+	private void pathEventNavPointReached() {
+	}
+
+	/**
+	 * Bot has stuck or path does not exist.
+	 */
+	private void pathEventBotStuck() {
+	}
+	
+	//
+	// =========
+	// BEHAVIOUR
+	// =========
+	//
+	
+    @Override
+    public void botKilled(BotKilled event) {
+    	// clear utility data structures
+    	utilBotKilled();
+    	
+    	// bot was killed, clean up your data structures    
+    	// TODO: clear you own data structures here
+    	targetItem = null;
+    	civilianToLead = null;
+    	enemyLocations.clear();
+    }
+
+    // ==================
+    // SENSES - CIVILIANS
+    // ==================
+    
+    public boolean isCivilian(Player player) {
+		return player.getName().startsWith(CIVILIAN_NAME);
+	}
+    
+    public Player getSomeCivilian() {
+    	for (Player player : players.getPlayers().values()) {
+    		if (isCivilian(player)) return player;
+    	}
+    	return null;
+    }
+    
+    public boolean isSomeCivilianVisible() {
+    	for (Player player : players.getVisiblePlayers().values()) {
+    		if (isCivilian(player)) return true;
+    	}
+    	return false;
+    }
+    
+    public boolean isCivilianVisible(Player civilian) {
+		return civilian != null && isCivilian(civilian) && civilian.isVisible();
+	}
+
+	public boolean isCivilianInTalkingDistance(Player civilian) {
+    	return civilian != null && isCivilian(civilian) && hasCivilianLocation(civilian) 
+    			&& info.getDistance(getCivilianLocation(civilian)) <= CIVILIAN_TALKING_DISTANCE;
+    }
+    
+   	public boolean isCivilianFollowingMe(Player civilian) {
+		if (civilian == null) return false;
+		Boolean result = civilianFollowingYou.get(civilian.getId());
+		return result != null && result;
+	}
+	
+	public boolean hasSomeCivilianLocation() {
+		for (Player player : players.getVisiblePlayers().values()) {
+    		if (hasCivilianLocation(player)) return true;
+    	}
+		return false;
+	}
+
+	public boolean hasCivilianLocation(Player civilian) {
+		return civilian != null && isCivilian(civilian) && civilianPositions.containsKey(civilian.getId()) && civilianPositions.get(civilian.getId()) != null;
+	}
+	
+	public Location getCivilianLocation(Player civilian) {
+		if (civilian == null) return null;
+		if (!isCivilian(civilian)) return null;
+		if (civilian.isVisible()) return civilian.getLocation();
+		return civilianPositions.get(civilian.getId());
+	}
+	
+	// ==============
+    // SENSES - ALIEN
+    // ==============
+    
+    /**
+     * Checks whether the 'player' is Alien. 
+     * @param player
+     * @return
+     */
+    public boolean isAlien(Player player) {
+        return player.getName().startsWith(ALIEN_NAME);
+    }
+
+    /**
+     * Returns some Alien {@link Player} object or null if no aliens are known.
+     * @return
+     */
+    public Player getSomeAlien() {
+        for (Player player : players.getPlayers().values()) {
+            if (isAlien(player)) {
+                return player;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether you can see some Alien.
+     * @return
+     */
+    public boolean isSomeAlienVisible() {
+        for (Player player : players.getVisiblePlayers().values()) {
+        	if (isAlienVisible(player)) return true;
+        }
+        return false;
+    }
+
+    public boolean isAlienVisible(Player alien) {
+        return alien != null && isAlien(alien) && alien.isVisible();
+    }
+
+    public boolean hasAlienLocation(Player alien) {
+        return alien != null && isAlien(alien) && alien.isVisible() && alien.getLocation() != null;
+    }
+
+    public Location getAlienLocation(Player alien) {
+    	if (alien == null) return null;
+        return alien.getLocation();
+    }
+
+	// =======
+    // ACTIONS
+    // =======
+    
+    public void setStandardMovementSpeed() {
+    	config.setSpeedMultiplier(STANDARD_MOVEMENT_SPEED);
+    }
+    
+    public void setCivilianMovementSpeed() {
+    	config.setSpeedMultiplier(CIVILIAN_MOVEMENT_SPEED);
+    }
+
+    @Override
+    public void logic() throws PogamutException {
+    	// Process all communication that has come since previous logic() iteration
+    	utilProcessChat();
+    	
+    	//
+    	// WRITE YOUR CODE HERE
+    	//
+    	
+    	if (collectFlakCannon())
+    		return;
+    	
+    	if (fight())
+    		return;
+    	
+    	civilianToLead = getNearestCivilian();
+    	leadCivilian(); 	
+    	
+    	if (collectAmmo())
+    		return;
+    }
+    
+    // ============
+    // ITEM PICKING
+    // ============
+    
+    Item targetItem = null;
+    
+    private Item getTargetItem(Collection<Item> items) {
+    	return DistanceUtils.getNearest(
+    			items,
+    			info.getLocation(),
+    			new DistanceUtils.IGetDistance<Item>() {
+
+					@Override
+					public double getDistance(Item object, ILocated target) {
+						return navMeshModule.getAStarPathPlanner().getDistance(target, object);
+					}    				
+				});
+    }
+    
+    // BEHAVIOUR 1: Arming yourself with flak cannon
+    private boolean collectFlakCannon() {
+    	if (weaponry.hasWeapon(UT2004ItemType.FLAK_CANNON))
+    		return false;
+    	
+    	Item nearestFlak = getTargetItem(items.getSpawnedItems(UT2004ItemType.FLAK_CANNON).values());
+    	
+    	if (nearestFlak == null)
+    		return false;
+    	
+    	targetItem = nearestFlak;
+    	navigation.navigate(nearestFlak);    	
+    	return true;
+    }
+    
+    private boolean collectAmmo() {
+    	int amount = weaponry.getAmmo(UT2004ItemType.FLAK_CANNON_AMMO);
+    	if (amount == 5)
+    		return false;
+    	
+    	// BEHAVIOUR 2: Always try to get ammo if has 0
+    	if (!weaponry.hasAmmo(UT2004ItemType.FLAK_CANNON_AMMO)) {
+    		Item nearestAmmo = getTargetItem(items.getAllItems(UT2004ItemType.FLAK_CANNON_AMMO).values());
+    		
+    		if (nearestAmmo == null)
+    			return false;
+    		
+    		log.info("GOING FOR ITEM");
+    		navigation.navigate(nearestAmmo);
+    		targetItem = nearestAmmo;
+    		return true;
+    	}
+    	
+    	if (wantAmmo()) {
+    		Item nearestAmmo = getTargetItem(items.getSpawnedItems(UT2004ItemType.FLAK_CANNON_AMMO).values());
+    		if (nearestAmmo == null)
+    			return false;
+    		double distance = this.getPathDistance(nearestAmmo.getLocation(), info.getLocation());
+    		
+    		// BEHAVIOUR 3: Collecting ammo if it is nearby
+    		if (distance <= 750 || amount < 3) {
+    			if (civilianToLead != null && isCivilianFollowingMe(civilianToLead))
+            		this.tellOne_Stop(civilianToLead);
+    			log.info("GOING FOR ITEM");
+    			navigation.navigate(nearestAmmo);
+    			return true;
+    		}
+    	}    	
+    	
+    	return false;
+    }
+    
+    // TODO: if not in combat and civilian is safe and ammo is less than some number. 
+    //Also take into account whether the civilian is following
+    private boolean wantAmmo() {    	
+    	return (civilianToLead == null || (weaponry.getAmmo(UT2004ItemType.FLAK_CANNON_AMMO) < 3 ));
+    }
+    
+    @EventListener(eventClass = ItemPickedUp.class)
+    public void itemPickedUp(ItemPickedUp event) {
+    	if (info.getSelf() == null) return; // ignore the first equipment...
+    	Item pickedUp = items.getItem(event.getId());
+    	if (pickedUp == null) return; // ignore unknown items
+    	if (items.getItem(event.getId()) == targetItem) {
+    		targetItem = null;
+    	}
+    }
+    
+    // =============
+    // LEAD CIVILIAN
+    // =============
+    
+    Player civilianToLead = null;
+    
+    private boolean goToCivilian(Player civilian) {
+    	if (isCivilianFollowingMe(civilian))
+    		return false;
+    	
+    	if (civilian != null && hasCivilianLocation(civilian)) {
+    		navigation.navigate(getCivilianLocation(civilian));
+    		log.info("GOING TO CIVILIAN");
+    		return true;
+    	}   	
+    	
+    	return false;
+    }
+    
+    private Player getNearestCivilian() {
+    	Player targetCivilian = null;
+    	double distance = Double.MAX_VALUE;
+    	
+    	for (Player player : players.getPlayers().values()) {
+    		if (isCivilian(player) && hasCivilianLocation(player)) {
+    			double dis = getPathDistance(getCivilianLocation(player), info.getLocation());
+    			if (dis < distance) {
+    				targetCivilian = player;
+    				distance = dis;
+    			}
+    		}
+    	}
+    	
+    	return targetCivilian;
+    }
+    
+    private boolean leadCivilian() {
+    	if (civilianToLead == null) {
+    		setStandardMovementSpeed();
+    		return false;
+    	}
+    	
+    	if (!isCivilianFollowingMe(civilianToLead) && isCivilianInTalkingDistance(civilianToLead) && targetItem == null)
+    		tellOne_FollowMe(civilianToLead);
+    	
+    	if (!isCivilianFollowingMe(civilianToLead) && targetItem == null && (targetEnemy == null || !targetEnemy.isVisible())) {
+    		if (goToCivilian(civilianToLead))
+    			return true;
+    		setStandardMovementSpeed();
+    		return false;
+    	}
+    	
+    	double myDis = getPathDistance(info.getLocation(), factoryNavPoint.getLocation());
+    	double civDis = getPathDistance(getCivilianLocation(civilianToLead), factoryNavPoint.getLocation());
+    	
+    	if (myDis < civDis && getPathDistance(info.getLocation(), getCivilianLocation(civilianToLead)) < 200)
+    		setCivilianMovementSpeed();
+    	else
+    		setStandardMovementSpeed();
+    	
+    	if ((getPathDistance(info.getLocation(), getCivilianLocation(civilianToLead)) < 200 || 
+    		info.getDistance(getCivilianLocation(civilianToLead)) < 200) 
+    		&& targetItem == null)
+    		navigation.navigate(factoryNavPoint);
+    	
+    	return true;
+    }
+    
+    // ======
+    // COMBAT
+    // ======
+    
+    Player targetEnemy = null;
+    
+    // Find nearest enemy to nearest civilian. If there is no civilian, find nearest enemy to myself
+    private Player getNearestEnemy() {
+    	double distance = Double.MAX_VALUE;
+    	Player enemy = null;
+    	Player civilian = this.getNearestCivilian();
+    	
+    	/*for (UnrealId player : enemyLocations.keySet()) { 		
+    		if (enemyLocations.get(player) == null)
+    			continue;
+    		if (civilian != null) {
+	    		double dis = getPathDistance(getCivilianLocation(civilian), this.enemyLocations.get(player));
+	    		
+	    		if (dis < distance) {
+	    			enemy = players.getPlayer(player);
+	    			distance = dis;
+	    		}
+    		} else {
+    			double dis = info.getDistance(this.enemyLocations.get(player));
+    			if (dis < distance) {
+    				enemy = players.getPlayer(player);
+    				distance = dis;
+    			}
+    		}   	
+    	}*/
+    	
+    	for (Player player : players.getPlayers().values()) {
+    		if (!isAlien(player) || !isAlienVisible(player))
+				continue;
+    		if (civilian != null) {
+	    		double dis = getPathDistance(getCivilianLocation(civilian), player.getLocation());
+	    		
+	    		if (dis < distance) {
+	    			enemy = player;
+	    			distance = dis;
+	    		}
+    		} else {
+    			double dis = info.getDistance(player.getLocation());
+    			if (dis < distance) {
+    				enemy = player;
+    				distance = dis;
+    			}
+    		}   			
+    	}
+    	
+    	return enemy;
+    }
+    
+    Cooldown scan = new Cooldown(3000);
+    
+    Map<UnrealId, Location> enemyLocations = new HashMap<UnrealId, Location>();
+    
+    private void scanSurroundings() {
+    	log.info("SCANNING");
+		move.turnHorizontal(180);
+		for (Player player : players.getPlayers().values()) {
+			if (!isAlien(player) || !isAlienVisible(player))
+				continue;
+			double dis = info.getDistance(player);
+			
+			enemyLocations.put(player.getId(), player.getLocation());
+			
+			if (dis < 300) {
+				weaponry.changeWeapon(UT2004ItemType.FLAK_CANNON);
+	    		shoot.shoot(targetEnemy);
+	    		return;
+			}   					
+		}
+	}
+    	  
+    
+    private boolean fight() {
+    	if (scan.tryUse() && !isSomeAlienVisible())
+    		scanSurroundings();
+
+   		targetEnemy = getNearestEnemy();
+    	
+    	if (targetEnemy == null && !isSomeAlienVisible()) {
+    		return false;
+    	}
+    	
+    	double distance = info.getDistance(targetEnemy);
+    	
+    	if (!targetEnemy.isVisible() && !isSomeAlienVisible()) {
+    		targetEnemy = null;
+    		shoot.stopShooting();
+    		return false;
+    	}   		
+    	
+    	if (distance > 350 && distance < 1200) {
+    		shoot.stopShooting();
+    		log.info("FOLLOWING ENEMY");
+    		if (civilianToLead != null && isCivilianFollowingMe(civilianToLead))
+    			tellOne_Stop(civilianToLead);
+    		navigation.navigate(targetEnemy);
+    		
+    		return true;
+    	}
+    	
+    	if (distance <= 350) {
+    		weaponry.changeWeapon(UT2004ItemType.FLAK_CANNON);
+    		shoot.shoot(targetEnemy);
+    		navigation.stopNavigation();
+    		return true;
+    	}
+    	return false;    	
+    }
+    
+    // NAVIGATION
+    public double getPathDistance(Location from, Location to) {
+		IPathFuture<ILocated> future = getNavMeshModule().getAStarPathPlanner().computePath(from, to);
+		List<ILocated> pathPoints = future.get();		
+		if (pathPoints != null && pathPoints.size() > 1) {
+			double distance = 0;
+			Location last = pathPoints.get(0).getLocation();
+			for (int i = 1; i < pathPoints.size(); ++i) {
+				distance += last.getDistance(pathPoints.get(i).getLocation());
+				last = pathPoints.get(i).getLocation();
+			}
+			return distance;
+		} else {
+			return fwMap.getDistance(navPoints.getNearestNavPoint(from), navPoints.getNearestNavPoint(to));
+		}
+	}
+    //
+    // ============
+    // UTILITY CODE
+    // ============
+    //
+    
+    //
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // YOU DON'T HAVE TO ALTER FOLLOWING CODE IN ORDER TO SOLVE THE TASK
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    //    
+    
+    //
+    // ---------
+    // CONSTANTS
+    // ---------
+    //
+    
+    public static final String QUESTION_SEE   = "Can you see me?";
+	public static final String ANSWER_SEE_YES = "Yes.";
+	public static final String ANSWER_SEE_NO  = "No.";
+	
+	public static final String COMMAND_STOP   = "Stop!";
+	public static final String ANSWER_STOP_OK = "Okey!";
+	
+	public static final String COMMAND_TURN   = "Turn!";
+	public static final String ANSWER_TURN_OK = "Turning!";
+	
+	public static final String COMMAND_FOLLOW_ME             = "Follow me!";
+	public static final String ANSWER_FOLLOW_ME_OK           = "I'm right behind you!";	
+	public static final String ANSWER_FOLLOW_ME_CANT_SEE_YOU = "I can't see you, sorry.";
+	public static final String ANSWER_FOLLOW_ME_IM_FREEZED   = "Alien is too near, I'm freezed by fear! I won't follow you!";
+	
+	public static final String ANSWER_FOLLOWING_SOMEONE_ELSE = "I'm not listening to you, I'm following someone else.";
+	
+	public static final String SAY_CANT_SEE_YOU = "I've lost you!";
+	
+    public static final String ANSWER_DONT_UNDERSTAND_DISTANCE_FAR = "I don't understand you because you are too far.";
+        
+    public static final String ANSWER_DONT_UNDERSTAND = "I don't understand what you are saying.";
+    
+	public static final String AT_FACTORY_MSG         = "Cool I'm at factory!";
+	
+	public static final String MY_POSITION_IS = "Please help! My location is: ";
+	
+	public static final String I_CAN_SEE_ALIEN = "I can see alien!";
+	
+	public static final String FREEZED_BY_FEAR = "Alien is too near, I'm freezed by fear! Help!";
+	
+	public static final String I_WAS_KILLED    = "I was killed!";
+	
+	public static final String CIVILIAN_NAME   = "Civilian";
+	
+	public static final String ALIEN_NAME      = "Alien";
+	
+	public static final String PRIVATE_PREFIX  = "Private:";
+		
+	//
+	// ---------------------
+	// BEHAVIOR UTILITY CODE
+	// ---------------------
+	//
+	
+	private List<Tuple2<UnrealId, String>> chat = new ArrayList<Tuple2<UnrealId, String>>();
+	
+	private final Pattern locationPattern = Pattern.compile("\\[([-]?[0-9]+.[0-9]+)\\|([-]?[0-9]+.[0-9]+)\\|([-]?[0-9]+.[0-9]+)\\]");
+	
+	public void utilProcessChat() {
+		for (Tuple2<UnrealId, String> msg : chat) {
+            if (msg.getSecond().equals(ANSWER_SEE_YES))      answerCanYouSeeMe_YES(msg.getFirst());
+			if (msg.getSecond().equals(ANSWER_SEE_NO))       answerCanYouSeeMe_NO(msg.getFirst());
+			if (msg.getSecond().equals(ANSWER_STOP_OK))      answerStopped(msg.getFirst());
+			if (msg.getSecond().equals(ANSWER_TURN_OK))      answerTurning(msg.getFirst());
+			if (msg.getSecond().equals(ANSWER_FOLLOW_ME_OK)) answerFollowMe_YES(msg.getFirst());
+			if (msg.getSecond().equals(ANSWER_FOLLOW_ME_CANT_SEE_YOU)) answerFollowMe_NO_CanNotSee(msg.getFirst());
+			if (msg.getSecond().equals(ANSWER_FOLLOW_ME_IM_FREEZED))   answerFollowMe_NO_CanSeeAlien(msg.getFirst());
+			if (msg.getSecond().equals(ANSWER_FOLLOWING_SOMEONE_ELSE)) civilianIsNotListeningToYou(msg.getFirst());
+			if (msg.getSecond().equals(SAY_CANT_SEE_YOU))              civilianStoppedFollowingYouBecauseItLostYou(msg.getFirst());
+			if (msg.getSecond().equals(ANSWER_DONT_UNDERSTAND))        civilianDoesntUnderstand(msg.getFirst());
+			if (msg.getSecond().equals(ANSWER_DONT_UNDERSTAND_DISTANCE_FAR))  civilianDoesntUnderstandYouAreTooFar(msg.getFirst());
+			if (msg.getSecond().equals(AT_FACTORY_MSG))      civilianSafe(msg.getFirst());
+			if (msg.getSecond().equals(I_CAN_SEE_ALIEN))     civilianSeeAlien(msg.getFirst());
+			if (msg.getSecond().equals(FREEZED_BY_FEAR))     civilianFrozen(msg.getFirst());
+			if (msg.getSecond().equals(I_WAS_KILLED))        civilianKilled(msg.getFirst());
+			Matcher m = locationPattern.matcher(msg.getSecond());
+			if (m.find()) {
+				double x = Double.parseDouble(m.group(1));
+				double y = Double.parseDouble(m.group(2));
+				double z = Double.parseDouble(m.group(3));
+				civilianPosition(msg.getFirst(), new Location(x,y,z));
+			}
+		}
+		chat.clear();
+	}
+	
+	
+	@ObjectClassEventListener(eventClass=WorldObjectUpdatedEvent.class, objectClass = Player.class)
+	public void utilPlayerUpdated(WorldObjectUpdatedEvent<Player> event) {
+		if (event.getObject().getName().contains(CIVILIAN_NAME) && event.getObject().isVisible()) {
+			if (event.getObject().getLocation() != null) {
+				civilianPositions.put(event.getObject().getId(), event.getObject().getLocation());
+			}
+		}
+	}
+	
+	@EventListener(eventClass = TeamChat.class)
+    public void utilEventTeamChat(TeamChat event) {
+    	utilReceivedMessage(event.getId(), event.getText());
+    }
+    
+	@EventListener(eventClass = GlobalChat.class)
+	public void utilEventGlobalChat(GlobalChat event) {
+		utilReceivedMessage(event.getId(), event.getText());
+	}
+	
+	public void utilReceivedMessage(UnrealId from, String msg) {
+		if (msg.startsWith(PRIVATE_PREFIX)) {
+			msg = msg.substring(PRIVATE_PREFIX.length());
+		}
+		chat.add(new Tuple2<UnrealId, String>(from, msg));
+	}
+
+	public void tellAll(String msg) {
+		body.getCommunication().sendGlobalTextMessage(msg);
+	}
+	
+	public void tellOne(UnrealId botId, String msg) {
+		body.getCommunication().sendPrivateTextMessage(botId, msg);
+	}
+	
+	public void utilBotKilled() {
+		chat.clear();
+	}
+	
+	@Override
+	public Initialize getInitializeCommand() {
+		return new Initialize().setName("GuardBot");
+	}
+	
+    /**
+     * This method is called when the bot is started either from IDE or from command line.
+     *
+     * @param args
+     */
+    public static void main(String args[]) throws PogamutException {
+    	// wrapped logic for bots executions, suitable to run single bot in single JVM
+    	new UT2004BotRunner(GuardBot.class, "GuardBot").setMain(true).startAgent();
+    }
+}

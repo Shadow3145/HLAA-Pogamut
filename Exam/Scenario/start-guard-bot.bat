@@ -1,0 +1,1 @@
+java -jar guard-bot-example.one-jar.jar

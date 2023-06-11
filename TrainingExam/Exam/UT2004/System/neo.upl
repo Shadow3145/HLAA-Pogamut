@@ -1,0 +1,2 @@
+[Public]
+Player=(DefaultName="neo",Ragdoll=Male,Mesh=neo.neo,species=xGame.SPECIES_Merc,BodySkin=neoskins.neobody,FaceSkin=neoskins.neohead,Portrait=neoskins.neoportrait,Text=Xplayers.neo,Sex=male,Menu="SP",Aggressiveness=+1.5,Accuracy=+0.8,CombatStyle=+0.6,StrafingAbility=+1.5,Tactics=+0.9,bjumpy=1)

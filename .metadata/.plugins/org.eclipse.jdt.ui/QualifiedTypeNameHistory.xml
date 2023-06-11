@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<qualifiedTypeNameHistroy>
+    <fullyQualifiedTypeName name="ut2004.exercises.e03.comm.ItemInfo"/>
+    <fullyQualifiedTypeName name="ut2004.exercises.e03.comm.TCTargetItem"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.Player"/>
+    <fullyQualifiedTypeName name="java.util.List"/>
+    <fullyQualifiedTypeName name="java.util.ArrayList"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.base.utils.math.DistanceUtils"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.base.utils.math.DistanceUtils.IGetDistance"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.Item"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.utils.Heatup"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.NavPoint"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.ut2004.agent.module.sensor.WeaponPref"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.base.agent.navigation.impl.PathFuture"/>
+    <fullyQualifiedTypeName name="java.util.stream.Collectors"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.ut2004.agent.navigation.navmesh.NavMeshClearanceComputer"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.ut2004.agent.navigation.navmesh.NavMeshClearanceComputer.ClearanceLimit"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.ut2004.agent.navigation.UT2004PathExecutor"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.ut2004.agent.navigation.navmesh.pathfollowing.UT2004AcceleratedPathExecutor"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.base3d.worldview.object.Velocity"/>
+    <fullyQualifiedTypeName name="java.util.HashMap"/>
+    <fullyQualifiedTypeName name="java.util.Map"/>
+    <fullyQualifiedTypeName name="tdm.tc.msgs.TCItemInfo"/>
+    <fullyQualifiedTypeName name="tdm.tc.msgs.TCTargetItem"/>
+    <fullyQualifiedTypeName name="java.lang.Integer"/>
+    <fullyQualifiedTypeName name="tdm.tc.msgs.TCItemSpawnTimeUpdate"/>
+    <fullyQualifiedTypeName name="tdm.tc.msgs.TCEnemyInfo"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.unreal.communication.messages.UnrealId"/>
+    <fullyQualifiedTypeName name="vip.tc.msgs.TCBuddyInfo"/>
+    <fullyQualifiedTypeName name="org.apache.commons.logging.Log"/>
+    <fullyQualifiedTypeName name="vip.tc.msgs.TCPlayerUpdate"/>
+    <fullyQualifiedTypeName name="java.lang.Double"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.ut2004.communication.messages.ItemType"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.ut2004.communication.messages.ItemType.Category"/>
+    <fullyQualifiedTypeName name="java.util.HashSet"/>
+    <fullyQualifiedTypeName name="java.util.Set"/>
+    <fullyQualifiedTypeName name="java.util.Comparator"/>
+    <fullyQualifiedTypeName name="vip.tc.msgs.TCAllyDeath"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.ut2004.agent.module.sensomotoric.Weapon"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.base3d.worldview.object.Rotation"/>
+    <fullyQualifiedTypeName name="javax.vecmath.Vector3d"/>
+    <fullyQualifiedTypeName name="javax.vecmath.Tuple3d"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.pogamut.ut2004.communication.messages.UT2004ItemType"/>
+    <fullyQualifiedTypeName name="java.util.Collection"/>
+    <fullyQualifiedTypeName name="cz.cuni.amis.utils.Cooldown"/>
+</qualifiedTypeNameHistroy>

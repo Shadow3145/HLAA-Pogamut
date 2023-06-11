@@ -1,0 +1,2 @@
+[Public]
+Player=(DefaultName="Copperhead",Mesh=HumanMaleA.MercMaleC,species=xGame.SPECIES_Merc,Portrait=CopperheadTextures.CopperheadPortrait,Text=XPlayers.Copperhead,Sex=Male,BodySkin=CopperheadTextures.CopperheadBody,FaceSkin=CopperheadTextures.CopperheadHead,FavoriteWeapon=xWeapons.FlakCannon,Aggressiveness=+1.0,bJumpy=0,StrafingAbility=+1.0,Tactics=+1.0,CombatStyle=+1.0,Accuracy=+1.0)

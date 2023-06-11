@@ -1,0 +1,190 @@
+package vip;
+
+import cz.cuni.amis.pogamut.base3d.worldview.object.Location;
+import cz.cuni.amis.pogamut.ut2004.agent.execution.UT2004BotExecution;
+import cz.cuni.amis.pogamut.ut2004.agent.execution.UT2004BotExecutionConfig;
+import cz.cuni.amis.pogamut.ut2004.factory.guice.remoteagent.UT2004ServerFactory;
+import cz.cuni.amis.pogamut.ut2004.teamcomm.server.UT2004TCServer;
+import cz.cuni.amis.pogamut.ut2004.utils.UT2004BotRunner;
+import cz.cuni.amis.pogamut.ut2004.utils.UT2004ServerRunner;
+import cz.cuni.amis.pogamut.ut2004.vip.protocol.VIPGameConfig;
+import cz.cuni.amis.pogamut.ut2004.vip.server.UT2004VIPServer;
+import cz.cuni.amis.pogamut.ut2004.vip.server.UT2004VIPServerModule;
+import cz.cuni.amis.utils.exception.PogamutException;
+import java.util.logging.Level;
+import vip.bot.CounterBot;
+
+/**
+ * See comments inside {@link #main(String[])} 
+ * @author Jimmy
+ */
+public class StartVIP {
+	
+	/**
+	 * Starts your bots as Counter Terrorists.
+	 * 
+	 * @param botsToStart
+	 */
+    public static void startCounterTerroristBots(int botsToStart) {
+        new UT2004BotRunner(CounterBot.class, "CTBot").setMain(false).setLogLevel(Level.WARNING).startAgents(botsToStart);
+    }
+    
+    /**
+     * Starts 4 terorrists bots.
+     * 
+     * DO NOT USE - leaves trailing bot instances after JVM kill...
+     */
+    public static void startTerroristBots(int botsToStart) {
+    	for (int i = 0; i < botsToStart; ++i) {
+    		UT2004BotExecutionConfig config = new UT2004BotExecutionConfig();
+    		config.setBotId("Terrorists");
+    		config.setPathToBotJar("bots/terroristbot-3.8.1-SNAPSHOT.one-jar.jar");
+        
+    		UT2004BotExecution exec = new UT2004BotExecution(config, null);
+    		exec.start("localhost", 3000);
+    	}
+    }
+
+    /**
+     * Starts VIP bot.
+     * 
+     * DO NOT USE - leaves trailing bot instances after JVM kill...
+     */
+    public static void startVIPBot() {
+        UT2004BotExecutionConfig config = new UT2004BotExecutionConfig();
+        config.setBotId("VIP");
+        config.setPathToBotJar("bots/vip-bot-3.8.1-SNAPSHOT.one-jar.jar");
+
+        UT2004BotExecution exec = new UT2004BotExecution(config, null);
+        exec.start("localhost", 3000);
+    }
+
+    /**
+     * Starts VIP game.
+     */
+    public static void startVIPGame_DM_Rankin_FE() {
+        VIPGameConfig config = new VIPGameConfig();
+        {
+            // MEANT TO BE PLAYED ON DM-Rankin-FE
+            config.setTargetMap("DM-Rankin-FE");
+
+            config.setCtsSpawnAreas(
+                    new Location[]{
+                        new Location(4550, 387, -280)
+                    }
+            );
+            config.setTsSpawnAreas(
+                    new Location[]{
+                        new Location(-482, 1300, -122)
+                    }
+            );
+            config.setVipSafeAreas(
+                    new Location[]{
+                        new Location(-550, -606, -270)
+                    }
+            );
+            config.setVipSafeAreaRadius(50);
+
+            config.setFixedVIP(true);   // always assign VIP to VIPBot
+            config.setFixedVIPNamePrefix("VIPBot");
+
+            config.setRoundCount(100);  // all bots will play 100 rounds of VIP
+            config.setRoundTimeUT(180); // total length of single round
+
+            config.setVipSafeCTsScore(100);  // CT wins score
+            config.setVipSafeTsScore(0);     //  T loses score
+            config.setVipKilledCTsScore(0);  // CT loses score
+            config.setVipKilledTsScore(100); //  T wins score
+        }
+
+        // START UT2004TagServer
+        UT2004VIPServerModule module = new UT2004VIPServerModule();
+        UT2004ServerFactory factory = new UT2004ServerFactory(module);
+        UT2004ServerRunner serverRunner = new UT2004ServerRunner(factory);
+
+        UT2004VIPServer server = (UT2004VIPServer) serverRunner.setMain(false).startAgent();
+
+        // START THE TAG GAME
+        server.startGame(config);
+    }
+    
+    /**
+     * Starts VIP game.
+     */
+    public static void startVIPGame_DM_Dust2k5() {
+        VIPGameConfig config = new VIPGameConfig();
+        {
+            // MEANT TO BE PLAYED ON DM-Dust2k5
+            config.setTargetMap("DM-Dust2k5");
+
+            config.setCtsSpawnAreas(
+                    new Location[]{
+                        new Location(1850, -10000, 10)
+                    }
+            );
+            config.setTsSpawnAreas(
+                    new Location[]{
+                        new Location(-1565, 185, -365)
+                    }
+            );
+            config.setVipSafeAreas(
+                    new Location[]{
+                        new Location(4323, 313, -206)
+                    }
+            );
+            config.setVipSafeAreaRadius(50);
+
+            config.setFixedVIP(true);   // always assign VIP to VIPBot
+            config.setFixedVIPNamePrefix("VIPBot");
+
+            config.setRoundCount(100);  // all bots will play 100 rounds of VIP
+            config.setRoundTimeUT(180); // total length of single round
+
+            config.setVipSafeCTsScore(100);  // CT wins score
+            config.setVipSafeTsScore(0);     //  T loses score
+            config.setVipKilledCTsScore(0);  // CT loses score
+            config.setVipKilledTsScore(100); //  T wins score
+        }
+
+        // START UT2004VIPServer
+        UT2004VIPServerModule module = new UT2004VIPServerModule();
+        UT2004ServerFactory factory = new UT2004ServerFactory(module);
+        UT2004ServerRunner serverRunner = new UT2004ServerRunner(factory);
+
+        UT2004VIPServer server = (UT2004VIPServer) serverRunner.setMain(false).startAgent();
+
+        // START THE TAG GAME
+        server.startGame(config);
+    }
+
+    public static void main(String args[]) throws PogamutException {
+    
+    	// ----------------------------
+    	// BOTS + VIP GAME MODE STARTER
+    	// ----------------------------
+    	
+        // IT IS ADVISED TO RUN VIPBot + TerroristBots FROM CONSOLE => faster debugging
+
+    	// START TEAM COMM
+    	//UT2004TCServer.startTCServer();
+    	
+    	// START VIP BOT
+    	//startVIPBot(); // better to run him from console and leave him be
+    	
+    	// START TERRORIST BOTS // better to run them from console and leave them be
+        //startTerroristBots(4);
+        
+    	// START "n" COUNTER TERRORIST BOTS
+        startCounterTerroristBots(4);
+        
+        // START VIP GAME on DM-Rankin-FE
+        //startVIPGame_DM_Rankin_FE();
+        
+        // START VIP GAME on DM-Dust2k5
+        startVIPGame_DM_Dust2k5();
+        
+        // THIS JVM WON'T AUTO-TERMINATE ITSELF!
+        // => advanced stuff, won't code here, sorry, always exterminate manually from IDE
+    }
+
+}

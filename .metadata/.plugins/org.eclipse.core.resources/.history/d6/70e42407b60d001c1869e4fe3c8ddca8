@@ -1,0 +1,22 @@
+package vip.tc.msgs;
+
+
+import cz.cuni.amis.pogamut.unreal.communication.messages.UnrealId;
+import cz.cuni.amis.pogamut.ut2004.teamcomm.mina.messages.TCMessageData;
+import cz.cuni.amis.pogamut.base3d.worldview.object.Location;
+
+public class TCBuddyInfo extends TCMessageData {
+
+	/**
+	 * Auto-generated.
+	 */
+	private static final long serialVersionUID = 786632348487491248L;
+	
+	public UnrealId player;
+	public Location location;
+	
+	public TCBuddyInfo(UnrealId playerId, Location location) {
+		this.player = playerId;
+		this.location = location;
+	}
+}

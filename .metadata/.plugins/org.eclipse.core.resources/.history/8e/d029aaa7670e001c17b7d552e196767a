@@ -1,0 +1,6 @@
+package vip.bot;
+
+public class Snippet {
+	Map<UnrealId, ItemInfo> targetItems = new HashMap<UnrealId, ItemInfo>();
+}
+

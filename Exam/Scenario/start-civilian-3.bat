@@ -1,0 +1,1 @@
+java -jar civilian-bot-1.0.0.one-jar.jar 3

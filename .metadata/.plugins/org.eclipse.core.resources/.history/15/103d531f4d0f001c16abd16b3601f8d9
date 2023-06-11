@@ -1,0 +1,746 @@
+package vip.bot;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.logging.Level;
+import cz.cuni.amis.pogamut.base.agent.navigation.IPathFuture;
+import cz.cuni.amis.pogamut.base.communication.worldview.listener.annotation.EventListener;
+import cz.cuni.amis.pogamut.base.utils.math.DistanceUtils;
+import cz.cuni.amis.pogamut.base3d.worldview.object.ILocated;
+import cz.cuni.amis.pogamut.base3d.worldview.object.Location;
+import cz.cuni.amis.pogamut.base3d.worldview.object.Rotation;
+import cz.cuni.amis.pogamut.unreal.communication.messages.UnrealId;
+import cz.cuni.amis.pogamut.ut2004.agent.module.sensomotoric.Weapon;
+import cz.cuni.amis.pogamut.ut2004.agent.module.sensor.WeaponPref;
+import cz.cuni.amis.pogamut.ut2004.agent.module.utils.TabooSet;
+import cz.cuni.amis.pogamut.ut2004.agent.navigation.NavigationState;
+import cz.cuni.amis.pogamut.ut2004.bot.impl.UT2004Bot;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.ItemType.Category;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.UT2004ItemType;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbcommands.Initialize;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.BotKilled;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.ConfigChange;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.GameInfo;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.InitedMessage;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.Item;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.ItemPickedUp;
+import cz.cuni.amis.pogamut.ut2004.communication.messages.gbinfomessages.Player;
+import cz.cuni.amis.pogamut.ut2004.utils.UT2004BotRunner;
+import cz.cuni.amis.pogamut.ut2004.vip.bot.UT2004BotVIPController;
+import cz.cuni.amis.pogamut.ut2004.vip.protocol.CSBotTeam;
+import cz.cuni.amis.pogamut.ut2004.vip.protocol.messages.CSRoundStart;
+import cz.cuni.amis.utils.Cooldown;
+import cz.cuni.amis.utils.exception.PogamutException;
+import cz.cuni.amis.utils.flag.FlagListener;
+import vip.tc.msgs.TCItemPicked;
+import vip.tc.msgs.TCTargetItem;
+import vip.tc.msgs.TCEnemyInfo;
+import vip.tc.msgs.TCPlayerUpdate;
+import vip.tc.CommObjectUpdates;
+import vip.tc.CommUser;
+import vip.tc.msgs.TCRunningTo;
+import vip.tc.msgs.TCAllyDeath;
+import vip.tc.msgs.TCBuddyInfo;
+
+public class CounterBot extends UT2004BotVIPController<UT2004Bot> {
+
+	private static int INSTANCE = 0;
+	
+	/**
+	 * Skins that are used for counter-terrorists bot.
+	 */
+	private static String[] SKINS = new String[]{ "Bot.BotA", "Bot.BotB", "Bot.BotC", "Bot.BotD" };    
+	//private static String[] SKINS = new String[]{ "neo", "neo", "neo", "neo" };
+	
+	/**
+	 * Speed of the VIP bot.
+	 */
+	public static final double VIPBOT_SPEED = 0.6;
+	
+	/**
+	 * Normal speed of the bot (i.e., one that the bot initially has). 
+	 */
+	public static final double NORMAL_SPEED = 1.0;
+	
+	/**
+	 * Used to taboo items we were stuck going for or we have picked up recently
+	 */
+	public TabooSet<Item> tabooItems;
+
+	/** My current speed. */
+	public double speed = 1;
+
+	/** Sharing states of objects within the game with other team mates. */
+	public CommObjectUpdates<CounterBot> commObjects;
+
+	/** User communication. */
+	public CommUser<CounterBot> commUser;
+	
+	/** Location VIP is currently navigating to. */
+	public Location vipRunningTo;
+	
+	/** 
+	 * Current item our bot is currently going for
+	 * TODO: needs to be filled in properly
+	 */
+	public Item targetItem = null;
+	
+    /**
+     * Initialize command of the bot, called during initial handshake, init can
+     * set things like name of bot, its skin, skill, team ect.
+     *
+     * @see Initialize
+     * @return
+     */
+    @Override
+    public Initialize getInitializeCommand() {
+        return new Initialize().setName("Neo-" + (++INSTANCE)).setDesiredSkill(6).setTeam(CSBotTeam.COUNTER_TERRORIST.ut2004Team).setSkin(SKINS[INSTANCE-1]);
+    }
+
+    @Override
+    public void botInitialized(GameInfo gameInfo, ConfigChange currentConfig, InitedMessage init) {
+        super.botInitialized(gameInfo, currentConfig, init);
+        log.setLevel(Level.INFO);
+        bot.getLogger().getCategory("Yylex").setLevel(Level.OFF);
+        
+        // INITIALIZE CUSTOM MODULES
+ 		tabooItems = new TabooSet<Item>(bot);
+
+ 		this.getNavigation().addStrongNavigationListener(
+ 				new FlagListener<NavigationState>() {
+ 					@Override
+ 					public void flagChanged(NavigationState changedValue) {
+ 						switch (changedValue) {
+ 						case PATH_COMPUTATION_FAILED:
+ 						case STUCK:
+ 							if (targetItem != null)
+ 								tabooItems.add(targetItem, 30);
+ 							break;
+ 						case TARGET_REACHED:
+ 							if (targetItem != null)
+ 								tabooItems.add(targetItem, 5);
+ 							break;
+ 						}
+ 					}
+ 				});
+
+ 		commObjects = new CommObjectUpdates<CounterBot>(this);
+ 		commUser = new CommUser<CounterBot>(this);
+
+ 		// ===================
+ 		// WEAPON PREFERENCES
+ 		// ===================
+ 		
+ 		// GENERAL WEAPON PREFERENCES
+    	weaponPrefs.addGeneralPref(UT2004ItemType.MINIGUN, false);
+    	weaponPrefs.addGeneralPref(UT2004ItemType.LIGHTNING_GUN, true);    	
+    	weaponPrefs.addGeneralPref(UT2004ItemType.LINK_GUN, false);
+    	weaponPrefs.addGeneralPref(UT2004ItemType.SHOCK_RIFLE, true);
+    	weaponPrefs.addGeneralPref(UT2004ItemType.SNIPER_RIFLE, true);
+    	weaponPrefs.addGeneralPref(UT2004ItemType.ROCKET_LAUNCHER, true);
+    	weaponPrefs.addGeneralPref(UT2004ItemType.FLAK_CANNON, true);
+    	weaponPrefs.addGeneralPref(UT2004ItemType.ASSAULT_RIFLE, true);
+    	weaponPrefs.addGeneralPref(UT2004ItemType.SHIELD_GUN, false);
+    	weaponPrefs.addGeneralPref(UT2004ItemType.BIO_RIFLE, true);
+    	
+    	// RANGED WEAPON PREFERENCES
+    	weaponPrefs.newPrefsRange(400)
+    		.add(UT2004ItemType.FLAK_CANNON, true)
+    		.add(UT2004ItemType.LINK_GUN, true);
+    	
+    	weaponPrefs.newPrefsRange(1150)
+    		.add(UT2004ItemType.MINIGUN, false)
+    		.add(UT2004ItemType.ROCKET_LAUNCHER, true)
+    		.add(UT2004ItemType.LINK_GUN, true);
+    	
+    	weaponPrefs.newPrefsRange(2500)
+    		.add(UT2004ItemType.LIGHTNING_GUN, true)
+    		.add(UT2004ItemType.SHOCK_RIFLE, true)
+    		.add(UT2004ItemType.SNIPER_RIFLE, true);   
+ 		
+    }
+    
+    /**
+	 * VIP Game Restart!
+	 * @param event
+	 */
+	@EventListener(eventClass=CSRoundStart.class)
+	public void roundStart(CSRoundStart event) {
+		vipRunningTo = null;
+		reset(); 
+	}
+	
+	@EventListener(eventClass=TCRunningTo.class)
+	public void playerRunningTo(TCRunningTo event) {
+		if (event.id.equals(getVip().getVIPId())) {
+			vipRunningTo = event.location;
+		}
+	}
+	
+	/**
+	 * Changes the speed of the bot to match the speed of VIP
+	 */
+	public void setVIPSpeed() {
+		getConfig().setSpeedMultiplier(VIPBOT_SPEED);
+        speed = VIPBOT_SPEED;
+	}
+	
+	/**
+	 * Changes the speed of the bot back to normal.
+	 */
+	public void setNormalSpeed() {
+		getConfig().setSpeedMultiplier(NORMAL_SPEED);
+        speed = NORMAL_SPEED;
+	}
+	
+	public boolean isVIPSpeed() {
+		return Math.abs(speed - VIPBOT_SPEED) < 0.001;
+	}
+	
+	public boolean isNormalSpeed() {
+		return Math.abs(speed - NORMAL_SPEED) < 0.001;
+	}
+	
+	public void dodgeLeft(boolean doubleDodge) {
+		if (info.getVelocity().isZero(0.1)) return;
+		Location inFront = info.getLocation().add(info.getVelocity().asLocation().getNormalized().scale(100));
+		move.dodgeLeft(inFront, doubleDodge);
+	}
+	
+	public void dodgeRight(boolean doubleDodge) {
+		if (info.getVelocity().isZero(0.1)) return;
+		Location inFront = info.getLocation().add(info.getVelocity().asLocation().getNormalized().scale(100));
+		move.dodgeRight(inFront, doubleDodge);
+	}	
+    
+	
+    @Override
+    public void logic() {
+    	//log.info("-----/// LOGIC ITERATION " + (logicIteration++) + "///-----");
+    	
+		// WAIT FOR VIP ROUND
+    	if (!vip.isRoundRunning()) {
+    		log.info("ROUND NOT RUNNING...");
+    		return;
+    	} 	
+    	
+    	
+    	// TODO: CODE YOUR BEHAVIOR HERE!
+    	
+    	// COMMUNICATION UPDATE
+    	commObjects.update();
+		commUser.update();
+    	sendEnemyInfo();
+    	
+    	// SET BUDDY
+    	if (backBuddy == null || frontBuddy == null)
+    		assignBuddy();	
+    	
+    	log.info("BACK: " + backBuddy);
+    	log.info("FRONT: " + frontBuddy);
+    	
+    	if (!isVIPProtected()) {
+    		UnrealId nearest = getNearestBotToVIP();
+    		if (nearest == info.getId())
+    			followVIP();
+    	}
+    	
+    	if (backBuddy == info.getId()) {
+    		backBuddyMovement();
+    		if (engageInCombat())
+    			return;
+    		
+    		if (this.isVIPProtected()) {
+    			targetItem = getTargetItem();
+    			navigateToItem();
+    		}
+    		
+    		return;
+    	}
+    	
+    	if (frontBuddy == info.getId()) {
+    		frontBuddyMovement();
+    		if (engageInCombat())
+    			return;
+    		
+    		if (this.isVIPProtected()) {
+    			targetItem = getTargetItem();
+    			navigateToItem();
+    		}
+    		
+    		return;
+    	}
+    	
+    	if (engageInCombat())
+    		return;
+    	
+    	if (buddyNeedsHelp() || runningToBuddy) {
+    		runToBuddy();
+    		return;
+    	}
+    		    	
+    	if (!weaponsPicked()) {
+    		targetItem = getTargetItem();
+	    	if (navigateToItem())
+	    		return;
+    	}  	
+    	
+    	followVIP();  	
+    }
+    
+    private void reset() {
+    	backBuddy = null;
+    	frontBuddy = null;
+    	this.pickedWeapons.clear();
+    	lightCD.clear();
+    	enemyTargets.clear();
+    	alliesLocation.clear();
+    	deadAllies.clear();
+    	runningToBuddy = false;
+    	targetItems.clear();
+    	targetItem = null;
+    }
+    
+    // =================
+    // COMBAT BEHAVIOUR
+    // =================
+    /*
+     * 1. Reacting to enemy contact – communicating about enemy positions
+     * 2. Coordinated fire – bots will concentrate firepower onto a common target that is visible by majority
+     * 3. VIP protection
+     */
+    
+    Cooldown lightCD = new Cooldown(2000);
+    UnrealId backBuddy = null;
+    UnrealId frontBuddy = null;
+    
+    
+    Map<UnrealId, ArrayList<UnrealId>> enemyTargets = new HashMap<UnrealId, ArrayList<UnrealId>>();
+    Map<UnrealId, Location> alliesLocation = new HashMap<UnrealId, Location>();
+    List<UnrealId> sortedAllies = new ArrayList<UnrealId>();
+    Set<UnrealId> deadAllies = new HashSet<UnrealId>();
+       
+    private void assignBuddy() {   	  	    		
+    	for (UnrealId ally : players.getFriends().keySet()) {
+    		if (deadAllies.contains(ally))
+    			continue;
+    		sortedAllies.add(ally);
+    	}
+    	
+    	sortedAllies.add(info.getId());
+    	sortedAllies.remove(vip.getVIPId());
+    	
+
+    	for (int i = 0; i < sortedAllies.size() - 1; i++) {
+    		for (int j = 0; j < sortedAllies.size() - i - 1; j++) {
+    			if (sortedAllies.get(j).getStringId().compareTo(sortedAllies.get(j+1).getStringId()) < 0) {
+    				UnrealId temp = sortedAllies.get(j);
+    				sortedAllies.set(j, sortedAllies.get(j+1));
+    				sortedAllies.set(j+1, temp);
+    			}
+    		}
+    	}
+    
+    	
+    	if (sortedAllies.size() >= 2) {
+			if (info.getId() == sortedAllies.get(0)) {
+				backBuddy = sortedAllies.get(1);
+				frontBuddy = sortedAllies.get(0);
+    			sendBuddyInfo(backBuddy, true);
+    			sendBuddyInfo(frontBuddy, false);
+    		}
+    	} else if (sortedAllies.size() >= 1) 
+    		frontBuddy = sortedAllies.get(0);
+    }
+    
+    private void sendBuddyInfo(UnrealId id, boolean back) {
+    	tcClient.sendToTeam(new TCBuddyInfo(id, back));
+    }
+    
+    @EventListener(eventClass = TCBuddyInfo.class)
+    public void tcBuddyInfo(TCBuddyInfo event) {
+    	if (event.back)
+    		backBuddy = event.player;
+    	else
+    		frontBuddy = event.player;
+    }
+    
+    @EventListener(eventClass = TCAllyDeath.class)
+    public void tcAllyDeath(TCAllyDeath event) {
+    	deadAllies.add(info.getId());
+    }
+    
+    @EventListener(eventClass = TCPlayerUpdate.class)
+    public void tcPlayerUpdate(TCPlayerUpdate event) {
+    	alliesLocation.put(event.id, event.location);
+    	if (event.id == vip.getVIPId())
+    		vipRotation = event.rotation;
+    }  
+    
+    private void sendEnemyInfo() {
+    	for (Player enemy : players.getEnemies().values()) {
+    		if (enemy.isVisible())
+    			tcClient.sendToTeam(new TCEnemyInfo(info.getId(), enemy.getId(), true));
+    		else
+    			tcClient.sendToTeam(new TCEnemyInfo(info.getId(), enemy.getId(), false));
+    	}
+    }
+        
+    @EventListener(eventClass = TCEnemyInfo.class)
+    public void tcEnemyInfo(TCEnemyInfo event) {
+    	if (!event.visible) {
+    		if (enemyTargets.containsKey(event.enemy) && enemyTargets.get(event.enemy).contains(event.player))
+        		enemyTargets.remove(event.player);
+    		return;
+    	}
+    	
+    	if (!enemyTargets.containsKey(event.enemy)) {
+	    	ArrayList<UnrealId> players = new ArrayList<UnrealId>();
+	    	players.add(event.player);
+	    	enemyTargets.put(event.enemy, players);
+	    	return;
+	    }
+    	
+	    if (!enemyTargets.get(event.enemy).contains(event.player)) {
+	    	enemyTargets.get(event.enemy).add(event.player);
+	    	return;
+    	}    	
+    } 
+    
+    
+    ArrayList<UnrealId> buddyEnemies = new ArrayList<UnrealId>();
+    private boolean buddyNeedsHelp() {
+    	boolean help = false;
+    	for (UnrealId enemy : enemyTargets.keySet()) {
+    		for (UnrealId player : enemyTargets.get(enemy)) {
+    			if (isBuddy(player)) {
+    				help = true;
+    				buddyEnemies.add(enemy);
+    			}    				
+    		}
+    	}
+    	runningToBuddy = help;
+    	return help;
+    }
+    
+    private Player getEnemy() {
+    	int amount = -1;
+    	Player enemy = null;
+    	
+    	for (Player enemyTarget : players.getVisibleEnemies().values()) {
+    		if (!enemyTargets.containsKey(enemyTarget.getId()))
+    				continue;
+    		if (enemyTargets.get(enemyTarget.getId()).size() > amount) {
+    			amount = enemyTargets.get(enemyTarget.getId()).size();
+    			enemy = enemyTarget;
+    		}    		
+    	}
+    	
+    	return enemy;
+    } 
+    
+    private boolean engageInCombat() {
+    	Player target = getEnemy();
+    	
+    	if (target == null) {
+    		shoot.stopShooting();
+    		return false;
+    	}
+    	
+    	if(target != null && target.isVisible()) {
+    		if (isBuddy(info.getId()) && alliesLocation.get(vip.getVIPId()) != null && alliesLocation.get(info.getId()) != null &&
+    			getPathDistance(alliesLocation.get(vip.getVIPId()), alliesLocation.get(info.getId())) <= 100 &&
+    			weaponry.hasSecondaryLoadedWeapon(UT2004ItemType.SHIELD_GUN) && target.getFiring() > 0) {
+    			
+    			Weapon shieldGun = weaponry.getWeapon(UT2004ItemType.SHIELD_GUN);
+    			shoot.shoot(shieldGun, false, target);    			
+    			return true;
+    		}
+    		shootTarget(target);
+    	} else {
+    		shoot.stopShooting();
+    		return false;
+    	}
+    	return true;
+    }
+     
+    private void shootTarget(Player enemy) {
+    	if (lightCD.tryUse()) {
+    		//log.info("Shoot lightning");
+			shoot.shoot(weaponPrefs, enemy);
+		}
+		else {
+			WeaponPref pref = this.getWeaponPrefs().getWeaponPreference(this.info.getLocation().getDistance(enemy.getLocation()));
+			if (pref.getWeapon().equals(UT2004ItemType.ROCKET_LAUNCHER))
+			{
+				Location target = enemy.getLocation().sub(new Location(0, 0, 60));
+				if (getLevelGeometry() != null && visibility.isVisible(info.getLocation(), target))
+					//log.info("Shoot rocket");
+					shoot.shoot(weaponPrefs, target, UT2004ItemType.LIGHTNING_GUN);
+				else {
+					//log.info("Shoot");
+					shoot.shoot(weaponPrefs, enemy, UT2004ItemType.ROCKET_LAUNCHER, UT2004ItemType.LIGHTNING_GUN);
+				}
+			}
+			//log.info("Shoot");
+			shoot.shoot(weaponPrefs, enemy, UT2004ItemType.LIGHTNING_GUN);
+		}
+    }
+    
+    //==========
+    // MOVEMENT
+    //==========
+    
+    Rotation vipRotation = null;
+    
+    private void backBuddyMovement() {    	
+    	Location vipLocation = alliesLocation.get(vip.getVIPId());
+    	   	
+    	if (vipLocation == null)
+    		return;
+    	
+    	Location focus = info.getLocation().scale(2).sub(vipLocation);
+    	
+    	move.strafeTo(vipLocation, focus);
+    	double distance = this.getPathDistance(info.getLocation(), vipLocation);
+    	if (distance < 150)
+    		this.setVIPSpeed();
+    	else
+    		setNormalSpeed();
+    }
+    
+    private void frontBuddyMovement() {    	
+    	Location vipLocation = alliesLocation.get(vip.getVIPId());   	
+    	
+    	if (vipLocation == null)
+    		return;
+    	
+    	if (vipRunningTo == null) {
+    		move.moveTo(vipLocation);
+    		return;
+    	}    	
+    	Location frontBuddyLocation = vipLocation.add(vipRunningTo.sub(vipLocation).getNormalized().scale(200));
+    	
+    	this.setNormalSpeed();
+    	if (this.getPathDistance(vipLocation, info.getLocation()) > 300)
+    		navigation.navigate(frontBuddyLocation);
+    	else
+    		move.moveTo(frontBuddyLocation);
+    }
+    
+    private void followVIP() {
+    	Location vipLocation = alliesLocation.get(vip.getVIPId());
+    	navigation.navigate(vipLocation);
+    }
+    
+    boolean runningToBuddy = false;
+    
+    private void runToBuddy() {
+    	runningToBuddy = true;
+    	for (UnrealId enemy : buddyEnemies) {
+    		Player enemyPlayer = players.getPlayer(enemy);
+	    	if (enemyPlayer.isVisible()) {
+	    	   	if (!engageInCombat()) {
+	    	   		navigation.navigate(alliesLocation.get(backBuddy)); 
+	    	   	}
+	    	}
+    	}
+    }
+    
+    private boolean isVIPProtected() {  	
+    	UnrealId vipId = this.vip.getVIPId();
+    	Location vipLocation = alliesLocation.get(vipId);
+    	
+    	for (UnrealId ally : players.getFriends().keySet()) {
+    		Location location = this.alliesLocation.get(ally);
+    		if (location == null)
+    			continue;
+    		double distance = this.getPathDistance(location, vipLocation);
+    		
+    		if (distance < 150 && ally != vipId)
+    			return true;   			
+    	}
+    	
+    	return false;
+    }
+    
+    private UnrealId getNearestBotToVIP() {
+    	UnrealId nearestBot = null;
+    	double nearest = Double.MAX_VALUE;
+    	
+    	Location vipLocation = alliesLocation.get(this.vip.getVIPId());
+    	
+    	for (UnrealId ally : this.alliesLocation.keySet()) {
+    		if (ally == this.vip.getVIPId())
+    			continue;
+    		Location location = this.alliesLocation.get(ally);
+    		double distance = this.getPathDistance(location, vipLocation);
+    		
+    		if (distance < nearest) {
+    			nearestBot = ally;
+    			nearest = distance;
+    		}    			
+    	}
+    	
+    	double myDistance = this.getPathDistance(vipLocation, info.getLocation());
+    	
+    	if (myDistance < nearest)
+    		return info.getId();
+    	
+    	return nearestBot;
+    }
+
+    //==============
+    // ITEM PICKING
+    //==============
+    
+    Map<UnrealId, ItemInfo> targetItems = new HashMap<UnrealId, ItemInfo>();
+    Set<UnrealId> pickedWeapons = new HashSet<UnrealId>();
+    
+    private boolean isBuddy(UnrealId allyId) {
+    	return (allyId == backBuddy || allyId == frontBuddy);
+    }
+    
+    private Item getTargetItem() {
+    	return DistanceUtils.getNearest(
+    			getInterestingItems(),
+    			info.getLocation(),
+    			new DistanceUtils.IGetDistance<Item>() {
+
+					@Override
+					public double getDistance(Item object, ILocated target) {
+						return navMeshModule.getAStarPathPlanner().getDistance(target, object);
+					}
+    				
+				});
+    }
+    
+    private Collection<Item> getInterestingItems() {
+    	List<Item> result = new ArrayList<Item>();
+    	for (Item item : items.getSpawnedItems().values()) {
+    		
+    		boolean targeted = false;
+    		
+    		if (item.getType().getCategory() == Category.WEAPON ||
+    			item.getType().getCategory() == Category.ARMOR ||
+    			item.getType().getCategory() == Category.SHIELD ||
+    			item.getType().getCategory() == Category.OTHER ||
+    			(info.getHealth() < 60 && item.getType().getCategory() == Category.HEALTH)) {
+    			
+    			if (pickedWeapons.contains(item.getId()) && !isBuddy(info.getId()))
+    				continue;
+    			
+    			double distance = this.getPathDistance(info.getLocation(), item.getLocation());    			
+    			
+    			for(ItemInfo itemInfo : targetItems.values()) {
+    				if (itemInfo.getId() == item.getId() && itemInfo.getDistance() <= distance) {
+    					targeted = true;
+    					break;
+    				}					
+    			}
+    			if (targeted || (isBuddy(info.getId()) && distance > 900))
+    				continue;
+    			
+    			result.add(item);	
+    		}    		
+    	}	
+    	return result;
+    }
+    
+    private boolean navigateToItem() {
+    	if (targetItem == null)
+    		return false;
+    	
+    	if (!isVIPProtected() && isBuddy(info.getId()))
+    		return false;
+    	
+    	targetItem(targetItem);
+    	navigation.navigate(targetItem);
+    	
+    	return true;	
+    }
+    
+    private void targetItem(Item target) {
+    	double distance = navMeshModule.getAStarPathPlanner().getDistance(info.getLocation(), target);
+    	tcClient.sendToTeam(new TCTargetItem(info.getId(), target.getId(), distance));
+    }
+    
+    @EventListener(eventClass = TCTargetItem.class)
+    public void tcTargetItem(TCTargetItem event) {
+    	if (info.getId() != event.getWho())
+    		targetItems.put(event.getWho(), new ItemInfo(event.getWhat(), event.getDistance()));
+    }
+    
+    @EventListener(eventClass = ItemPickedUp.class)
+    public void itemPickedUp(ItemPickedUp event) {
+    	if (info.getSelf() == null) return; // ignore the first equipment...
+    	Item pickedUp = items.getItem(event.getId());
+    	if (pickedUp == null) return; // ignore unknown items
+    	if (items.getItem(event.getId()).getType().getCategory() == Category.WEAPON) {
+	    	// WEAPON WAS PICKED
+    		tcClient.sendToTeam(new TCItemPicked(info.getId(), event.getId()));
+    		pickedWeapons.add(event.getId());
+    		targetItem = null;
+    	}
+    }
+    
+    @EventListener(eventClass = TCItemPicked.class)
+    public void tcItemPicked(TCItemPicked event) {
+    	pickedWeapons.add(event.getWhat());
+    }
+    
+    private boolean weaponsPicked() {
+    	for (UnrealId item : items.getAllItems(Category.WEAPON).keySet()) {
+    		if (!pickedWeapons.contains(item))
+    			return false;
+    	}
+    	
+    	return true;
+    }
+
+    /**
+	 * Returns a navmesh path distance between two points within the environment.
+	 * @param from
+	 * @param to
+	 * @return
+	 */
+	public double getPathDistance(Location from, Location to) {
+		IPathFuture<ILocated> future = getNavMeshModule().getAStarPathPlanner().computePath(from, to);
+		List<ILocated> pathPoints = future.get();		
+		if (pathPoints != null && pathPoints.size() > 1) {
+			double distance = 0;
+			Location last = pathPoints.get(0).getLocation();
+			for (int i = 1; i < pathPoints.size(); ++i) {
+				distance += last.getDistance(pathPoints.get(i).getLocation());
+				last = pathPoints.get(i).getLocation();
+			}
+			return distance;
+		} else {
+			return fwMap.getDistance(navPoints.getNearestNavPoint(from), navPoints.getNearestNavPoint(to));
+		}
+	}
+
+    @Override
+    public void botKilled(BotKilled event) {
+    	if (backBuddy == info.getId()) {
+    		backBuddy = null;
+    		sendBuddyInfo(null, true);
+    	} else if (frontBuddy == info.getId()) {
+    		frontBuddy = null;
+    		sendBuddyInfo(null, false);
+    	}
+    	
+    	this.tcClient.sendToTeam(new TCAllyDeath(info.getId()));  	   	
+    }
+    
+
+    public static void main(String[] args) throws PogamutException {
+        new UT2004BotRunner(CounterBot.class, "CTBot").setMain(true).setLogLevel(Level.WARNING).startAgents(1);
+    }
+    
+}

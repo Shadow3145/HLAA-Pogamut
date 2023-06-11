@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<section name="Workbench">
+	<section name="MavenProjectImportWizardPage">
+		<list key="rootDirectory">
+			<item value="D:\School\NMgr1L\HLAA\Pogamut\Exam\GuardBot"/>
+			<item value="D:\School\NMgr1L\HLAA\Pogamut\TrainingExam\Exam\CounterBot-Java"/>
+			<item value="D:\School\NMgr1L\HLAA\Pogamut\Lab06-Homework"/>
+			<item value="D:\School\NMgr1L\HLAA\Pogamut\Lab05-Homework\AdvDuelBot"/>
+			<item value="D:\School\NMgr1L\HLAA\Pogamut\Lab04-Homework\DuelBot"/>
+			<item value="D:\School\NMgr1L\HLAA\Pogamut\Lab03-Homework\E03-ItemPicker"/>
+			<item value="J:\HLAA\E02-WolvesAndSheepJirka"/>
+			<item value="D:\School\NMgr1L\HLAA\Pogamut\Lab02-Homework\E02-WolvesAndSheep"/>
+			<item value="D:\School\NMgr1L\HLAA\Pogamut\Lab01-Homework\E01-SearchBot"/>
+			<item value="D:\School\NMgr1L\HLAA\Pogamut\Lab01-Bot\E00-EmptyBot"/>
+		</list>
+		<list key="projectNameTemplate">
+			<item value="Jirka"/>
+			<item value="[artifactId]"/>
+			<item value="[artifactId]-TRUNK"/>
+			<item value="[artifactId]-[version]"/>
+			<item value="[groupId].[artifactId]"/>
+			<item value="[groupId].[artifactId]-[version]"/>
+			<item value="[name]"/>
+		</list>
+	</section>
+	<section name="org.eclipse.m2e.core.pom.overview">
+	</section>
+	<section name="org.eclipse.m2e.core.pom.dependencies">
+	</section>
+</section>
